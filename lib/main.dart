@@ -1,8 +1,9 @@
 import 'dart:async' show Timer;
 import 'dart:math';
-
+import 'package:xrpl_dart/xrpl_dart.dart' as xrpl;
 import 'package:flutter/material.dart';
 import 'package:confetti/confetti.dart';
+import 'package:xrpl_dart/xrpl_dart.dart';
 
 void main() {
   runApp(const HedgehogThornGame());
@@ -309,7 +310,7 @@ class _GameScreenState extends State<GameScreen> {
   }
 
   void _spawnTarget() {
-    if (!_gameActive) return; // Add this safety check
+    if (!_gameActive) return;
 
     final screenWidth = MediaQuery.of(context).size.width;
     final screenHeight = MediaQuery.of(context).size.height;
@@ -325,19 +326,6 @@ class _GameScreenState extends State<GameScreen> {
         break;
       }
     }
-
-    setState(() {
-      _targets.add(
-        FlyingTarget(
-          position: Offset(
-            _random.nextDouble() * screenWidth,
-            screenHeight + 50,
-          ),
-          type: selectedType,
-          direction: _random.nextDouble() > 0.5 ? 1 : -1,
-        ),
-      );
-    });
 
     setState(() {
       _targets.add(
@@ -384,7 +372,6 @@ class _GameScreenState extends State<GameScreen> {
       (arrow) => arrow.isOffScreen(MediaQuery.of(context).size),
     );
 
-    // Update targets
     for (var target in _targets) {
       target.update();
     }
@@ -392,7 +379,6 @@ class _GameScreenState extends State<GameScreen> {
       (target) => target.isOffScreen(MediaQuery.of(context).size),
     );
 
-    // Check for collisions
     _checkCollisions();
 
     setState(() {});
@@ -553,7 +539,6 @@ class _GameScreenState extends State<GameScreen> {
         onPanEnd: _onPanEnd,
         child: Stack(
           children: [
-            // Sky background
             Container(
               decoration: const BoxDecoration(
                 gradient: LinearGradient(
@@ -564,7 +549,6 @@ class _GameScreenState extends State<GameScreen> {
               ),
             ),
 
-            // Clouds
             for (int i = 0; i < 5; i++)
               Positioned(
                 left: MediaQuery.of(context).size.width * 0.2 * i,
@@ -572,7 +556,6 @@ class _GameScreenState extends State<GameScreen> {
                 child: const Icon(Icons.cloud, color: Colors.white, size: 60),
               ),
 
-            // Targets
             for (final target in _targets)
               Positioned(
                 left: target.position.dx - 25,
@@ -587,7 +570,6 @@ class _GameScreenState extends State<GameScreen> {
                 ),
               ),
 
-            // Arrows
             for (final arrow in _arrows)
               Positioned(
                 left: arrow.position.dx - 15,
@@ -602,7 +584,6 @@ class _GameScreenState extends State<GameScreen> {
                 ),
               ),
 
-            // Ground
             Align(
               alignment: Alignment.bottomCenter,
               child: Container(
@@ -614,7 +595,6 @@ class _GameScreenState extends State<GameScreen> {
               ),
             ),
 
-            // Hedgehog
             Positioned(
               left: 50,
               bottom: 100,
@@ -624,7 +604,6 @@ class _GameScreenState extends State<GameScreen> {
               ),
             ),
 
-            // Game UI
             Center(
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
@@ -716,11 +695,9 @@ class _GameScreenState extends State<GameScreen> {
               ),
             ),
 
-            // Drag line
             if (_isDragging)
               CustomPaint(painter: DragLinePainter(_dragStart, _dragEnd)),
 
-            // Confetti
             Align(
               alignment: Alignment.topCenter,
               child: ConfettiWidget(
@@ -788,7 +765,7 @@ class Arrow {
 
   void update() {
     position += velocity;
-    velocity *= 0.98; // Air resistance
+    velocity *= 0.98;
   }
 
   bool isOffScreen(Size screenSize) {
@@ -841,4 +818,85 @@ class TargetType {
     required this.size,
     required this.spawnChance,
   });
+}
+
+class ZamanWalletService {
+  final ZamanWalletService _walletService = ZamanWalletService();
+  String? _walletAddress;
+  static final ZamanWalletService _instance = ZamanWalletService._internal();
+  factory ZamanWalletService() => _instance;
+  ZamanWalletService._internal();
+
+  final XRPL xrpl = XRPL();
+
+  String? _secretKey;
+  RippleAPI? _xrplClient;
+
+  void initialize({bool testnet = true}) {
+    _xrplClient = RippleAPI(
+      testnet
+          ? "https://s.altnet.rippletest.net:51234"
+          : "https://xrplcluster.com",
+    );
+  }
+
+  Future<bool> connectWallet(String secretKey) async {
+    try {
+      _secretKey = secretKey;
+      final wallet = Wallet.fromSeed(secretKey);
+      _walletAddress = wallet.address;
+      return true;
+    } catch (e) {
+      print('Wallet connection failed: $e');
+      return false;
+    }
+  }
+
+  Future<String?> sendXRP(String recipient, String amount) async {
+    try {
+      if (_walletAddress == null || _secretKey == null || _xrplClient == null) {
+        throw Exception('Wallet not connected or not initialized');
+      }
+
+      final wallet = Wallet.fromSeed(_secretKey!);
+
+      final payment = Payment(
+        account: _walletAddress!,
+        destination: recipient,
+        amount: Amount.fromXrp(amount),
+      );
+
+      final tx = await _xrplClient!.prepareTransaction(
+        payment.toJson(),
+        wallet: wallet,
+      );
+
+      final signed = wallet.sign(tx);
+      final response = await _xrplClient!.submitTransaction(signed);
+
+      return response.hash;
+    } catch (e) {
+      print('XRP transfer failed: $e');
+      return null;
+    }
+  }
+
+  Future<String?> getXRPBalance() async {
+    try {
+      if (_walletAddress == null || _xrplClient == null) return null;
+
+      final accountInfo = await _xrplClient!.getAccountInfo(_walletAddress!);
+      return accountInfo.accountData.balance;
+    } catch (e) {
+      print('Balance check failed: $e');
+      return null;
+    }
+  }
+
+  void disconnect() {
+    _walletAddress = null;
+    _secretKey = null;
+  }
+
+  String? get walletAddress => _walletAddress;
 }
